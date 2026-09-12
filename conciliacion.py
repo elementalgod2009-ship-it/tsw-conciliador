@@ -12,7 +12,7 @@ import streamlit as st
 
 def generar_reporte_ia(datos_descuadre):
     # Llama a la clave configurada en 
-    genai.configure(api_key=st.secrets.get("GOOGLE_API_KEY", st.secrets.get("GEMINI_API_KEY")))
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     modelo = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
