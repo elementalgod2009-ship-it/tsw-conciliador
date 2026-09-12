@@ -127,7 +127,7 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
     col_izq, col_der = st.columns(2)
 
     with col_izq:
-        st.subheader("📊 Distribución por Criterio")
+        st.subheader(" Distribución por Criterio")
         resumen = pd.DataFrame(
             {
                 "Estado": [
@@ -147,7 +147,7 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
         st.bar_chart(resumen, color="#2563EB")
 
     with col_der:
-        st.subheader("⚠️ Desglose del Riesgo Monetario")
+        st.subheader(" Desglose del Riesgo Monetario")
         riesgo_df = pd.DataFrame(
             {
                 "Tipo Anomalía": [
@@ -190,7 +190,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("⛽ TSW Conciliador: Agente Analítico de Auditoría")
+st.title(" TSW Conciliador: Agente Analítico de Auditoría")
 st.write(
     "Plataforma inteligente de auditoría diaria para Estaciones de Servicio. "
     "Cruza las ventas de pista (POS) contra las liquidaciones electrónicas (Datafast) "
