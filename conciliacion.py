@@ -1,5 +1,9 @@
+from io import BytesIO
+from pathlib import Path
+from typing import Any
 from google import genai
 import streamlit as st
+import pandas as pd
 
 def generar_reporte_ia(datos_descuadre):
     client = genai.Client(
