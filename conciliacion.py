@@ -22,8 +22,8 @@ def generar_reporte_ia(datos_descuadre):
     3. PROTOCOLO DE REVISIÓN
     """
 
-    response = client.models.generate_content(
-        model='gemini-1.5-flash',
+        response = client.models.generate_content(
+        model='gemini-2.5-flash',
         contents=prompt,
     )
     return response.text
