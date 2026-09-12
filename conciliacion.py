@@ -7,6 +7,29 @@ from typing import Any
 
 import pandas as pd
 
+import google.generativeai as genai
+import streamlit as st
+
+def generar_reporte_ia(datos_descuadre):
+    # Llama a la clave configurada en share.streamlit.io
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    modelo = genai.GenerativeModel('gemini-1.5-flash')
+    
+    prompt = f"""
+    Actúa como un Auditor Financiero de Estaciones de Servicio. 
+    Analiza las siguientes discrepancias detectadas en el cruce de liquidaciones de Datafast frente a las ventas POS: {datos_descuadre}
+    
+    Proporciona un reporte ejecutivo y serio estructurado únicamente con las siguientes tres categorías:
+    
+    1. HALLAZGO PRINCIPAL: (Describe la discrepancia detectada de forma concisa y profesional).
+    2. RIESGO FINANCIERO: (Describe el impacto del descuadre en el flujo de caja).
+    3. PROTOCOLO DE REVISIÓN: (Indica los pasos operativos específicos a seguir para conciliar el faltante o sobrante).
+    
+    El tono debe ser estrictamente corporativo, analítico y directo. Omite introducciones, saludos o frases genéricas.
+    """
+    
+    respuesta = modelo.generate_content(prompt)
+    return respuesta.text
 
 def normalizar_dataframe(
     df_crudo: pd.DataFrame,
