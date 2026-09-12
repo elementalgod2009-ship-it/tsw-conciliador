@@ -23,10 +23,11 @@ def generar_reporte_ia(datos_descuadre):
     """
 
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-3.6-flash',
         contents=prompt,
     )
     return response.text
+
 
 
 def normalizar_dataframe(
