@@ -1,4 +1,4 @@
-"""Módulo de lógica de negocio y conciliación financiera para TSW Conciliador."""
+"""Módulo de lógica de negocio, detección de hipótesis y conciliación para Datia / TSW Conciliador."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import streamlit as st
 
 
 def generar_reporte_ia(datos_descuadre: str) -> str:
-    """Llama al modelo Gemini para generar el diagnóstico narrativo de auditoría."""
+    """Llama a Gemini para generar un análisis basado en hipótesis explicativas y no punitivas."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
         return (
@@ -27,15 +27,17 @@ def generar_reporte_ia(datos_descuadre: str) -> str:
         )
 
         prompt = f"""
-        Actúa como un Auditor Financiero Senior especializado en estaciones de servicio (gasolineras) en Ecuador.
-        Analiza las siguientes discrepancias y excepciones detectadas en el cierre de turno/lote:
+        Actúa como un Asistente Analítico de Auditoría para Estaciones de Servicio (Datia).
+        Analiza las siguientes excepciones de cierre encontradas entre el sistema POS de pista y el procesador de tarjetas (Datafast):
 
         {datos_descuadre}
 
-        Proporciona un reporte ejecutivo y profesional estructurado únicamente en:
-        1. **HALLAZGO PRINCIPAL:** Explicación narrativa del origen probable de las diferencias en pista (ej. digitación, desfase de turnos).
-        2. **RIESGO FINANCIERO:** Severidad (Alta/Media/Baja) e impacto estimado en liquidez.
-        3. **PROTOCOLO DE REVISIÓN:** 3 pasos clave que debe ejecutar el administrador para verificar en pista/caja.
+        Genera un informe con enfoque de investigación operativa y NO PUNITIVO (no asumas automáticamente robo o pérdida). 
+        Estructura la respuesta estrictamente en estos 3 bloques:
+
+        1. **HIPÓTESIS DE ORIGEN:** Propón causas probables para las diferencias encontradas (ej. posible cambio de medio de pago a efectivo en caja, transacción procesada en el lote del día/turno siguiente, error de digitación en el POS).
+        2. **INFORMACIÓN Y EVIDENCIA FALTANTE:** Especifica qué documentos o soportes debe revisar el administrador para confirmar o descartar cada hipótesis (ej. vauchers físicos, reporte de lote del turno nocturno, bitácora de caja chica).
+        3. **PASOS RECOMENDADOS DE VERIFICACIÓN:** Acciones concretas paso a paso para que el usuario confirme la resolución sin generar fricción con el personal de pista.
         """
 
         response = client.models.generate_content(
@@ -91,7 +93,7 @@ def conciliar_sistemas(
     df_datafast: pd.DataFrame,
     tolerancia_max: float = 0.0,
 ) -> dict[str, pd.DataFrame]:
-    """Cruza POS y Datafast y clasifica cada excepción."""
+    """Cruza POS y Datafast e identifica coincidencias y excepciones."""
     cruce = pd.merge(
         df_pos,
         df_datafast,
@@ -126,6 +128,33 @@ def conciliar_sistemas(
     }
 
 
+def detectar_posibles_desfases(
+    solo_pos: pd.DataFrame, solo_datafast: pd.DataFrame
+) -> pd.DataFrame:
+    """Detecta coincidencias por monto idéntico que podrían sugerir un error de referencia o desfase de lote."""
+    posibles_desfases = []
+
+    if not solo_pos.empty and not solo_datafast.empty:
+        # Cruce buscando montos idénticos entre los registros no conciliados por id
+        cruce_monto = pd.merge(
+            solo_pos[["id_referencia", "monto_pos"]],
+            solo_datafast[["id_referencia", "monto_datafast"]],
+            left_on="monto_pos",
+            right_on="monto_datafast",
+            suffixes=("_pos", "_datafast"),
+        )
+
+        for _, row in cruce_monto.iterrows():
+            posibles_desfases.append({
+                "Ref_POS": row["id_referencia_pos"],
+                "Ref_Datafast": row["id_referencia_datafast"],
+                "Monto Coincidente ($)": row["monto_pos"],
+                "Hipótesis Suministrada": "Posible error de digitación de referencia o desfase de cierre de lote"
+            })
+
+    return pd.DataFrame(posibles_desfases)
+
+
 def generar_reporte_excepciones(
     diferencias_monto: pd.DataFrame,
     solo_datafast: pd.DataFrame,
@@ -141,12 +170,12 @@ def generar_reporte_excepciones(
 
     if not solo_datafast.empty:
         datafast = solo_datafast.copy()
-        datafast["tipo_error"] = "Sobra en Datafast"
+        datafast["tipo_error"] = "Sobra en Datafast (Sin registro en POS)"
         excepciones.append(datafast)
 
     if not solo_pos.empty:
         pos = solo_pos.copy()
-        pos["tipo_error"] = "Falta en Datafast"
+        pos["tipo_error"] = "Falta en Datafast (Registrado en POS)"
         excepciones.append(pos)
 
     if not excepciones:
