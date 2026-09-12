@@ -1,35 +1,28 @@
-"""Funciones compartidas del motor de conciliación TSW."""
-
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any
-
+from google import genai
+import streamlit as st
 import pandas as pd
 
-import google.generativeai as genai
-import streamlit as st
-
 def generar_reporte_ia(datos_descuadre):
-    # Llama a la clave configurada en 
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    modelo = genai.GenerativeModel('gemini-1.5-flash')
-    
+    # Inicializa el cliente moderno compatible con llaves AQ.
+    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+
     prompt = f"""
-    Actúa como un Auditor Financiero de Estaciones de Servicio. 
-    Analiza las siguientes discrepancias detectadas en el cruce de liquidaciones de Datafast frente a las ventas POS: {datos_descuadre}
-    
-    Proporciona un reporte ejecutivo y serio estructurado únicamente con las siguientes tres categorías:
-    
-    1. HALLAZGO PRINCIPAL: (Describe la discrepancia detectada de forma concisa y profesional).
-    2. RIESGO FINANCIERO: (Describe el impacto del descuadre en el flujo de caja).
-    3. PROTOCOLO DE REVISIÓN: (Indica los pasos operativos específicos a seguir para conciliar el faltante o sobrante).
-    
-    El tono debe ser estrictamente corporativo, analítico y directo. Omite introducciones, saludos o frases genéricas.
+    Actúa como un Auditor Financiero de Estaciones de Servicio.
+    Analiza las siguientes discrepancias detectadas en el cierre:
+    {datos_descuadre}
+
+    Proporciona un reporte ejecutivo y serio estructurado únicamente en:
+    1. HALLAZGO PRINCIPAL
+    2. RIESGO FINANCIERO
+    3. PROTOCOLO DE REVISIÓN
     """
-    
-    respuesta = modelo.generate_content(prompt)
-    return respuesta.text
+
+    # Llamada con el modelo actual de Gemini
+    response = client.models.generate_content(
+        model='gemini-1.5-flash',
+        contents=prompt,
+    )
+    return response.text
 
 def normalizar_dataframe(
     df_crudo: pd.DataFrame,
