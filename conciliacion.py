@@ -1,33 +1,50 @@
+"""Módulo de lógica de negocio y conciliación financiera para TSW Conciliador."""
+
+from __future__ import annotations
+
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+
 from google import genai
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
-def generar_reporte_ia(datos_descuadre):
-    client = genai.Client(
-        api_key=st.secrets["GOOGLE_API_KEY"],
-        vertexai=False
-    )
 
-    prompt = f"""
-    Actúa como un Auditor Financiero de Estaciones de Servicio.
-    Analiza las siguientes discrepancias detectadas en el cierre:
-    {datos_descuadre}
+def generar_reporte_ia(datos_descuadre: str) -> str:
+    """Llama al modelo Gemini para generar el diagnóstico narrativo de auditoría."""
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if not api_key:
+        return (
+            "⚠️ No se encontró la clave 'GOOGLE_API_KEY' configurada en st.secrets. "
+            "Por favor, agrégala en la configuración de la aplicación en Streamlit Cloud."
+        )
 
-    Proporciona un reporte ejecutivo y serio estructurado únicamente en:
-    1. HALLAZGO PRINCIPAL
-    2. RIESGO FINANCIERO
-    3. PROTOCOLO DE REVISIÓN
-    """
+    try:
+        client = genai.Client(
+            api_key=api_key,
+            vertexai=False,
+        )
 
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=prompt,
-    )
-    return response.text
+        prompt = f"""
+        Actúa como un Auditor Financiero Senior especializado en estaciones de servicio (gasolineras) en Ecuador.
+        Analiza las siguientes discrepancias y excepciones detectadas en el cierre de turno/lote:
 
+        {datos_descuadre}
+
+        Proporciona un reporte ejecutivo y profesional estructurado únicamente en:
+        1. **HALLAZGO PRINCIPAL:** Explicación narrativa del origen probable de las diferencias en pista (ej. digitación, desfase de turnos).
+        2. **RIESGO FINANCIERO:** Severidad (Alta/Media/Baja) e impacto estimado en liquidez.
+        3. **PROTOCOLO DE REVISIÓN:** 3 pasos clave que debe ejecutar el administrador para verificar en pista/caja.
+        """
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        return f"❌ Error al consultar el servicio de Inteligencia Artificial: {str(e)}"
 
 
 def normalizar_dataframe(
