@@ -10,10 +10,9 @@ import streamlit as st
 from conciliacion import (
     conciliar_sistemas,
     generar_reporte_excepciones,
+    generar_reporte_ia,
     leer_csv,
-    generar_reporte_ia, # Importación movida a la cabecera por buenas prácticas
 )
-
 
 POS_MAPPING = {
     "Ticket_No": "id_referencia",
@@ -106,46 +105,70 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
     diferencias = resultado["diferencias_monto"]
     solo_datafast = resultado["solo_datafast"]
     solo_pos = resultado["solo_pos"]
-    total_excepciones = (
-        len(diferencias) + len(solo_datafast) + len(solo_pos)
-    )
+    
+    total_registros = len(resultado["cruce"])
+    pct_salud = round((len(cuadran) / total_registros) * 100, 1) if total_registros > 0 else 0.0
 
+    # Cálculo de monto total en riesgo
+    monto_descuadre = diferencias["diferencia"].sum() if not diferencias.empty else 0.0
+    monto_sobrante = solo_datafast["monto_datafast"].sum() if not solo_datafast.empty else 0.0
+    monto_faltante = solo_pos["monto_pos"].sum() if not solo_pos.empty else 0.0
+    monto_riesgo_total = monto_descuadre + monto_sobrante + monto_faltante
+
+    # Tarjetas de Indicadores Superiores (KPIs)
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Conciliadas", len(cuadran))
-    col2.metric("Diferencias", len(diferencias))
-    col3.metric("Solo Datafast", len(solo_datafast))
-    col4.metric("Solo POS", len(solo_pos))
+    col1.metric("Salud Financiera", f"{pct_salud}%", help="% de transacciones conciliadas")
+    col2.metric("Monto en Riesgo", f"${monto_riesgo_total:,.2f}", delta="-Riesgo", delta_color="inverse")
+    col3.metric("Conciliadas ($1:1$)", f"{len(cuadran)} reg")
+    col4.metric("Excepciones Totales", f"{len(diferencias) + len(solo_datafast) + len(solo_pos)} reg")
 
-    st.subheader("Distribución del resultado")
-    resumen = pd.DataFrame(
-        {
-            "Estado": [
-                "Conciliadas",
-                "Diferencias de monto",
-                "Solo Datafast",
-                "Solo POS",
-            ],
-            "Cantidad": [
-                len(cuadran),
-                len(diferencias),
-                len(solo_datafast),
-                len(solo_pos),
-            ],
-        }
-    ).set_index("Estado")
-    st.bar_chart(resumen, color="#2563EB")
+    st.divider()
 
+    col_izq, col_der = st.columns(2)
+
+    with col_izq:
+        st.subheader("📊 Distribución por Criterio")
+        resumen = pd.DataFrame(
+            {
+                "Estado": [
+                    "Conciliadas",
+                    "Diferencias de monto",
+                    "Solo Datafast",
+                    "Solo POS",
+                ],
+                "Cantidad": [
+                    len(cuadran),
+                    len(diferencias),
+                    len(solo_datafast),
+                    len(solo_pos),
+                ],
+            }
+        ).set_index("Estado")
+        st.bar_chart(resumen, color="#2563EB")
+
+    with col_der:
+        st.subheader("⚠️ Desglose del Riesgo Monetario")
+        riesgo_df = pd.DataFrame(
+            {
+                "Tipo Anomalía": [
+                    "Descuadres de Monto",
+                    "Sobrantes Datafast",
+                    "Faltantes POS",
+                ],
+                "Monto ($)": [
+                    monto_descuadre,
+                    monto_sobrante,
+                    monto_faltante,
+                ],
+            }
+        ).set_index("Tipo Anomalía")
+        st.bar_chart(riesgo_df, color="#DC2626")
+
+    total_excepciones = len(diferencias) + len(solo_datafast) + len(solo_pos)
     if total_excepciones == 0:
-        st.success("Todas las transacciones coinciden dentro de la tolerancia.")
+        st.success("🎉 ¡Excelente! Todas las transacciones coinciden dentro de la tolerancia.")
     else:
-        st.warning(f"Se encontraron {total_excepciones} excepciones para revisar.")
-
-    if not diferencias.empty:
-        st.subheader("Diferencias de monto")
-        diferencias_grafico = diferencias[
-            ["id_referencia", "diferencia"]
-        ].set_index("id_referencia")
-        st.bar_chart(diferencias_grafico, color="#F59E0B")
+        st.warning(f"Se encontraron {total_excepciones} excepciones por un total de ${monto_riesgo_total:,.2f} para auditoría.")
 
 
 def mostrar_tabla(
@@ -160,22 +183,24 @@ def mostrar_tabla(
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="TSW Conciliador",
-    page_icon=None,
+    page_title="TSW Conciliador - Agente de Auditoría",
+    page_icon="⛽",
     layout="wide",
 )
 
-st.title("TSW Conciliador")
+st.title("⛽ TSW Conciliador: Agente Analítico de Auditoría")
 st.write(
-    "Carga las ventas del POS y las liquidaciones de Datafast para "
-    "detectar diferencias, pagos faltantes y movimientos no registrados."
+    "Plataforma inteligente de auditoría diaria para Estaciones de Servicio. "
+    "Cruza las ventas de pista (POS) contra las liquidaciones electrónicas (Datafast) "
+    "e infiere el origen de las excepciones mediante Inteligencia Artificial."
 )
 
 with st.sidebar:
-    st.header("Fuentes de datos")
+    st.header("⚙️ Configuración")
     archivo_pos = st.file_uploader(
-        "Archivo de ventas POS",
+        "Archivo de ventas POS (Pista)",
         type=["csv"],
         help="Debe incluir Ticket_No y Monto_Total.",
     )
@@ -189,12 +214,12 @@ with st.sidebar:
         value=archivo_pos is None and archivo_datafast is None,
     )
     tolerancia = st.number_input(
-        "Tolerancia máxima por transacción",
+        "Tolerancia máxima ($)",
         min_value=0.0,
         value=0.0,
         step=0.01,
         format="%.2f",
-        help="Las diferencias iguales o menores a este valor se consideran conciliadas.",
+        help="Diferencias menores o iguales a este valor se considerarán cuadradas.",
     )
     ejecutar = st.button(
         "Ejecutar conciliación",
@@ -231,12 +256,49 @@ st.caption(
     f"Tolerancia aplicada: ${st.session_state.get('tolerancia', tolerancia):.2f}"
 )
 
-tab_resumen, tab_pos, tab_datafast, tab_excepciones = st.tabs(
-    ["Resumen", "Tabla POS", "Tabla Datafast", "Excepciones"]
+# Cálculo unificado del reporte de excepciones
+reporte_excepciones = generar_reporte_excepciones(
+    resultado["diferencias_monto"],
+    resultado["solo_datafast"],
+    resultado["solo_pos"],
+)
+
+# --- PESTAÑAS DE NAVEGACIÓN ---
+tab_resumen, tab_agente, tab_excepciones, tab_pos, tab_datafast = st.tabs(
+    ["📊 Resumen & KPIs", "🤖 Agente IA", "⚠️ Excepciones", "📋 Tabla POS", "💳 Tabla Datafast"]
 )
 
 with tab_resumen:
     mostrar_resumen(resultado)
+
+with tab_agente:
+    st.subheader("🤖 Diagnóstico Narrativo de Auditoría")
+    st.caption("Análisis contextual impulsado por el modelo Gemini 3.6 Flash")
+    
+    if reporte_excepciones.empty:
+        st.success("🎉 No se detectaron discrepancias en este cierre. No se requiere diagnóstico de la IA.")
+    else:
+        st.info("El Agente examinará la tabla de excepciones para identificar patrones, evaluar riesgos y sugerir el protocolo de revisión.")
+        if st.button("Generar Diagnóstico del Agente", type="primary"):
+            with st.spinner("Analizando anomalías operativas con Gemini..."):
+                resumen_texto = reporte_excepciones.to_string(index=False)
+                diagnostico = generar_reporte_ia(resumen_texto)
+                st.markdown(diagnostico)
+
+with tab_excepciones:
+    mostrar_tabla(
+        "Reporte de diferencias y excepciones",
+        reporte_excepciones,
+        "No hay excepciones para mostrar.",
+    )
+    if not reporte_excepciones.empty:
+        st.download_button(
+            "📥 Descargar reporte de excepciones (CSV)",
+            data=reporte_excepciones.to_csv(index=False).encode("utf-8"),
+            file_name="reporte_excepciones.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 with tab_pos:
     mostrar_tabla(
@@ -251,42 +313,3 @@ with tab_datafast:
         st.session_state["datafast_crudo"],
         "No hay liquidaciones Datafast cargadas.",
     )
-
-with tab_excepciones:
-    reporte = generar_reporte_excepciones(
-        resultado["diferencias_monto"],
-        resultado["solo_datafast"],
-        resultado["solo_pos"],
-    )
-    mostrar_tabla(
-        "Reporte de diferencias",
-        reporte,
-        "No hay excepciones para mostrar.",
-    )
-    if not reporte.empty:
-        st.download_button(
-            "Descargar reporte CSV",
-            data=reporte.to_csv(index=False).encode("utf-8"),
-            file_name="reporte_excepciones.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-# --- SECCIÓN IA CORREGIDA ---
-st.write("---")
-st.write("**Auditoría Inteligente**")
-
-# Usamos la variable 'reporte' definida en el bloque anterior (línea 197)
-if not reporte.empty: 
-    if st.button("Generar Reporte Gerencial", type="primary"):
-        with st.spinner("Procesando auditoría financiera con Gemini..."):
-            # 1. Convertimos la tabla de errores a texto simple
-            resumen_datos = reporte.to_string(index=False) 
-            
-            # 2. Llamamos a la API y guardamos el texto en 'reporte_ia' (nueva variable)
-            reporte_ia = generar_reporte_ia(resumen_datos)
-            
-            # 3. Mostramos el resultado
-            st.info(reporte_ia)
-else:
-    st.success("No se encontraron discrepancias. Cuadre perfecto.")
