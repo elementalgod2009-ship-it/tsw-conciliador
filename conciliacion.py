@@ -3,21 +3,23 @@ import streamlit as st
 import pandas as pd
 
 def generar_reporte_ia(datos_descuadre):
-    # Inicializa el cliente moderno compatible con llaves AQ.
-    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
-
+    # Forzamos el uso de la API de desarrolladores indicando vertexai=False
+    client = genai.Client(
+        api_key=st.secrets["GOOGLE_API_KEY"],
+        vertexai=False
+    )
+    
     prompt = f"""
     Actúa como un Auditor Financiero de Estaciones de Servicio.
     Analiza las siguientes discrepancias detectadas en el cierre:
     {datos_descuadre}
-
+    
     Proporciona un reporte ejecutivo y serio estructurado únicamente en:
     1. HALLAZGO PRINCIPAL
     2. RIESGO FINANCIERO
     3. PROTOCOLO DE REVISIÓN
     """
-
-    # Llamada con el modelo actual de Gemini
+    
     response = client.models.generate_content(
         model='gemini-1.5-flash',
         contents=prompt,
