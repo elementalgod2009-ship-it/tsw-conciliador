@@ -11,6 +11,7 @@ from conciliacion import (
     conciliar_sistemas,
     generar_reporte_excepciones,
     leer_csv,
+    generar_reporte_ia, # Importación movida a la cabecera por buenas prácticas
 )
 
 
@@ -271,20 +272,21 @@ with tab_excepciones:
             use_container_width=True,
         )
 
-from conciliacion import generar_reporte_ia
-
+# --- SECCIÓN IA CORREGIDA ---
+st.write("---")
 st.write("**Auditoría Inteligente**")
 
-# Asegúrate de usar la variable donde guardas el resultado de generar_reporte_excepciones()
-# Aquí asumimos que la variable se llama df_excepciones
-if not df_excepciones.empty: 
-    if st.button("Generar Reporte Gerencial"):
+# Usamos la variable 'reporte' definida en el bloque anterior (línea 197)
+if not reporte.empty: 
+    if st.button("Generar Reporte Gerencial", type="primary"):
         with st.spinner("Procesando auditoría financiera con Gemini..."):
-            # Convertimos la tabla de errores a texto simple para no saturar la API
-            resumen_datos = df_excepciones.to_string(index=False) 
-            reporte = generar_reporte_ia(resumen_datos)
+            # 1. Convertimos la tabla de errores a texto simple
+            resumen_datos = reporte.to_string(index=False) 
             
-            st.info(reporte)
+            # 2. Llamamos a la API y guardamos el texto en 'reporte_ia' (nueva variable)
+            reporte_ia = generar_reporte_ia(resumen_datos)
+            
+            # 3. Mostramos el resultado
+            st.info(reporte_ia)
 else:
     st.success("No se encontraron discrepancias. Cuadre perfecto.")
-
