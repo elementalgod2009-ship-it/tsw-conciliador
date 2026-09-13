@@ -36,7 +36,7 @@ def generar_reporte_ia(datos_descuadre: str) -> str:
         Estructura la respuesta estrictamente en estos 3 bloques:
 
         1. **HIPÓTESIS DE ORIGEN:** Propón causas probables para las diferencias encontradas (ej. posible cambio de medio de pago a efectivo en caja, transacción procesada en el lote del día/turno siguiente, error de digitación en el POS).
-        2. **INFORMACIÓN Y EVIDENCIA FALTANTE:** Especifica qué documentos o soportes debe revisar el administrador para confirmar o descartar cada hipótesis (ej. vauchers físicos, reporte de lote del turno nocturno, bitácora de caja chica).
+        2. **INFORMACIÓN Y EVIDENCIA FALTANTE:** Especifica qué documentos o soportes debe revisar el administrador para confirmar o descartar cada hipótesis (ej. vouchers físicos, reporte de lote del turno nocturno, bitácora de caja chica).
         3. **PASOS RECOMENDADOS DE VERIFICACIÓN:** Acciones concretas paso a paso para que el usuario confirme la resolución sin generar fricción con el personal de pista.
         """
 
@@ -64,7 +64,16 @@ def normalizar_dataframe(
             f"Faltan columnas requeridas en {fuente}: {faltantes_texto}"
         )
 
-    df = df[["id_referencia", "monto"]].copy()
+    # Conservamos columnas auxiliares de filtro si existen en el dataframe crudo
+    cols_a_preservar = ["id_referencia", "monto"]
+    if "Hora" in df_crudo.columns:
+        df["Hora"] = df_crudo["Hora"].astype(str)
+        cols_a_preservar.append("Hora")
+    if "Surtidor" in df_crudo.columns:
+        df["Surtidor"] = df_crudo["Surtidor"].astype(str)
+        cols_a_preservar.append("Surtidor")
+
+    df = df[cols_a_preservar].copy()
     df["id_referencia"] = df["id_referencia"].astype("string").str.strip()
     df["monto"] = pd.to_numeric(
         df["monto"]
@@ -135,7 +144,6 @@ def detectar_posibles_desfases(
     posibles_desfases = []
 
     if not solo_pos.empty and not solo_datafast.empty:
-        # Cruce buscando montos idénticos entre los registros no conciliados por id
         cruce_monto = pd.merge(
             solo_pos[["id_referencia", "monto_pos"]],
             solo_datafast[["id_referencia", "monto_datafast"]],
@@ -190,3 +198,92 @@ def generar_reporte_excepciones(
         )
 
     return pd.concat(excepciones, ignore_index=True)
+
+
+def generar_html_reporte_ejecutivo(
+    salud_financiera: float,
+    monto_riesgo: float,
+    total_reg: int,
+    reporte_excepciones: pd.DataFrame,
+    diagnostico_ia: str = ""
+) -> str:
+    """Genera una plantilla HTML profesional lista para imprimir como PDF o enviar como informe."""
+    filas_html = ""
+    if not reporte_excepciones.empty:
+        for _, row in reporte_excepciones.iterrows():
+            ref = row.get("id_referencia", "N/A")
+            m_pos = f"${row.get('monto_pos', 0):,.2f}" if pd.notna(row.get('monto_pos')) else "-"
+            m_df = f"${row.get('monto_datafast', 0):,.2f}" if pd.notna(row.get('monto_datafast')) else "-"
+            tipo = row.get("tipo_error", "Excepción")
+            res = row.get("Resolución Administrador", "Pendiente")
+            filas_html += f"<tr><td>{ref}</td><td>{m_pos}</td><td>{m_df}</td><td>{tipo}</td><td><strong>{res}</strong></td></tr>"
+    else:
+        filas_html = "<tr><td colspan='5' style='text-align:center;'>Sin excepciones registradas. Cierre perfecto.</td></tr>"
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Reporte de Auditoría Datia</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 30px; color: #1E293B; }}
+            .header {{ border-bottom: 3px solid #2563EB; padding-bottom: 10px; margin-bottom: 20px; }}
+            .title {{ font-size: 24px; font-weight: bold; color: #0F172A; }}
+            .subtitle {{ font-size: 14px; color: #64748B; }}
+            .kpi-container {{ display: flex; gap: 20px; margin-bottom: 25px; }}
+            .kpi-card {{ background: #F8FAFC; border: 1px solid #E2E8F0; padding: 15px; border-radius: 8px; flex: 1; }}
+            .kpi-title {{ font-size: 12px; color: #64748B; text-transform: uppercase; }}
+            .kpi-value {{ font-size: 22px; font-weight: bold; color: #1E293B; margin-top: 5px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+            th, td {{ border: 1px solid #CBD5E1; padding: 10px; text-align: left; font-size: 13px; }}
+            th {{ background-color: #F1F5F9; font-weight: bold; }}
+            .ia-box {{ background: #EFF6FF; border-left: 4px solid #2563EB; padding: 15px; margin-top: 25px; font-size: 13px; border-radius: 4px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="title">⛽ Datia — Informe Oficial de Cierre de Caja</div>
+            <div class="subtitle">Auditoría Operativa y Conciliación de Tarjetas | Estación de Servicio</div>
+        </div>
+
+        <div class="kpi-container">
+            <div class="kpi-card">
+                <div class="kpi-title">Salud Financiera</div>
+                <div class="kpi-value">{salud_financiera}%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Monto a Investigar</div>
+                <div class="kpi-value" style="color: #DC2626;">${monto_riesgo:,.2f}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Transacciones Procesadas</div>
+                <div class="kpi-value">{total_reg} reg</div>
+            </div>
+        </div>
+
+        <h3>⚠️ Detalle de Excepciones y Resoluciones</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Referencia</th>
+                    <th>Monto POS</th>
+                    <th>Monto Datafast</th>
+                    <th>Tipo Anomalía</th>
+                    <th>Resolución Administrador</th>
+                </tr>
+            </thead>
+            <tbody>
+                {filas_html}
+            </tbody>
+        </table>
+
+        {f'<div class="ia-box"><h4>🤖 Diagnóstico del Agente Analítico</h4><p>{diagnostico_ia.replace(chr(10), "<br>")}</p></div>' if diagnostico_ia else ''}
+
+        <br><br>
+        <p style="font-size: 11px; color: #94A3B8; text-align: center;">Generado automáticamente por Datia - Asistente de Auditoría para Gasolineras.</p>
+    </body>
+    </html>
+    """
+    return html
+
