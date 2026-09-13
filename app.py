@@ -1,4 +1,4 @@
-"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (UI Mejorada)."""
+"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (UI & Funciones Operativas)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import streamlit as st
 from conciliacion import (
     conciliar_sistemas,
     detectar_posibles_desfases,
+    generar_html_reporte_ejecutivo,
     generar_reporte_excepciones,
     generar_reporte_ia,
     leer_csv,
@@ -33,6 +34,8 @@ def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
         {
             "Ticket_No": ["T-1001", "T-1002", "T-1003", "T-1004", "T-1005", "T-1006"],
             "Fecha": ["2026-09-12"] * 6,
+            "Hora": ["08:15", "09:30", "11:45", "14:10", "16:40", "20:05"],
+            "Surtidor": ["Surtidor 01", "Surtidor 02", "Surtidor 01", "Surtidor 03", "Surtidor 02", "Surtidor 01"],
             "Metodo_Pago": ["Tarjeta"] * 5 + ["Efectivo"],
             "Monto_Total": [500.00, 100.00, 50.00, 75.50, 42.00, 25.00],
         }
@@ -41,6 +44,7 @@ def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
         {
             "Num_Autorizacion": ["T-1001", "T-1002", "T-1004", "T-9988", "T-9999"],
             "Fecha_Proceso": ["2026-09-12"] * 5,
+            "Hora": ["08:15", "09:30", "14:10", "16:40", "22:00"],
             "Valor_Liquidado": [480.00, 100.00, 75.50, 42.00, 200.00],
         }
     )
@@ -95,7 +99,7 @@ def cargar_datos(
     )
 
 
-def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
+def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> tuple[float, float, int]:
     """Muestra métricas y gráficos interactivos del resultado de la conciliación."""
     cuadran = resultado["cuadran"]
     diferencias = resultado["diferencias_monto"]
@@ -110,7 +114,6 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
     monto_faltante = solo_pos["monto_pos"].sum() if not solo_pos.empty else 0.0
     monto_riesgo_total = monto_descuadre + monto_sobrante + monto_faltante
 
-    # KPI Cards estilizadas
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Salud Financiera", f"{pct_salud}%", help="% de transacciones conciliadas sin ajuste")
     col2.metric("Monto a Investigar", f"${monto_riesgo_total:,.2f}", delta="Riesgo Acumulado", delta_color="inverse")
@@ -173,6 +176,8 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
         )
         st.plotly_chart(fig_riesgo, use_container_width=True)
 
+    return pct_salud, monto_riesgo_total, total_registros
+
 
 def mostrar_tabla(
     titulo: str,
@@ -193,24 +198,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# Estilos CSS Personalizados para UI Ejecutiva
-st.markdown(
-    """
-    <style>
-    .main { background-color: #0E1117; }
-    div[data-testid="stMetricValue"] { font-size: 2rem; font-weight: 700; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { border-radius: 6px 6px 0px 0px; padding: 8px 16px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 st.title("⛽ Datia: Asistente de Auditoría de Cierre de Caja")
 st.caption("Plataforma de investigación operativa basada en evidencia para Estaciones de Servicio")
 
 with st.sidebar:
-    st.header("⚙️ Configuración")
+    st.header("⚙️ Configuración & Fuentes")
     archivo_pos = st.file_uploader(
         "Archivo de ventas POS (Pista)",
         type=["csv"],
@@ -233,13 +225,8 @@ with st.sidebar:
         format="%.2f",
         help="Diferencias menores o iguales a este valor se considerarán cuadradas.",
     )
-    ejecutar = st.button(
-        "Ejecutar conciliación",
-        type="primary",
-        use_container_width=True,
-    )
 
-if ejecutar or "resultado" not in st.session_state:
+if "pos_crudo" not in st.session_state or usar_ejemplos:
     try:
         (
             pos_crudo,
@@ -253,17 +240,34 @@ if ejecutar or "resultado" not in st.session_state:
         )
         st.session_state["pos_crudo"] = pos_crudo
         st.session_state["datafast_crudo"] = datafast_crudo
-        st.session_state["resultado"] = conciliar_sistemas(
-            pos_normalizado,
-            datafast_normalizado,
-            tolerancia_max=tolerancia,
-        )
-        st.session_state["tolerancia"] = tolerancia
+        st.session_state["pos_norm"] = pos_normalizado
+        st.session_state["datafast_norm"] = datafast_normalizado
     except (ValueError, pd.errors.ParserError) as error:
         st.error(str(error))
         st.stop()
 
-resultado = st.session_state["resultado"]
+# --- FILTROS OPERATIVOS EN SIDEBAR ---
+with st.sidebar:
+    st.divider()
+    st.header("🎯 Filtros Operativos de Pista")
+    
+    pos_df = st.session_state["pos_norm"]
+    df_fast = st.session_state["datafast_norm"]
+
+    # Filtro opcional por Surtidor si existe en POS
+    surtidores = ["Todos"]
+    if "Surtidor" in pos_df.columns:
+        surtidores += sorted(pos_df["Surtidor"].dropna().unique().tolist())
+    surtidor_sel = st.selectbox("Filtrar por Surtidor/Isla", surtidores)
+
+    if surtidor_sel != "Todos":
+        pos_df = pos_df[pos_df["Surtidor"] == surtidor_sel].copy()
+
+    resultado = conciliar_sistemas(
+        pos_df,
+        df_fast,
+        tolerancia_max=tolerancia,
+    )
 
 reporte_excepciones = generar_reporte_excepciones(
     resultado["diferencias_monto"],
@@ -277,12 +281,12 @@ desfases_df = detectar_posibles_desfases(
 )
 
 # --- PESTAÑAS DE NAVEGACIÓN ---
-tab_resumen, tab_agente, tab_desfases, tab_excepciones, tab_pos, tab_datafast = st.tabs(
-    ["📊 Resumen & KPIs", "🤖 Asistente Datia", "🔍 Posibles Desfases", "⚠️ Gestión de Excepciones", "📋 POS", "💳 Datafast"]
+tab_resumen, tab_agente, tab_desfases, tab_excepciones, tab_export, tab_pos, tab_datafast = st.tabs(
+    ["📊 Resumen & KPIs", "🤖 Asistente Datia", "🔍 Posibles Desfases", "⚠️ Gestión de Excepciones", "📄 Reporte Imprimible", "📋 POS", "💳 Datafast"]
 )
 
 with tab_resumen:
-    mostrar_resumen(resultado)
+    pct_salud, monto_riesgo, total_reg = mostrar_resumen(resultado)
 
 with tab_agente:
     st.subheader("🤖 Diagnóstico de Investigación e Hipótesis")
@@ -295,7 +299,10 @@ with tab_agente:
             with st.spinner("Analizando evidencias y patrones con Datia..."):
                 resumen_texto = reporte_excepciones.to_string(index=False)
                 diagnostico = generar_reporte_ia(resumen_texto)
-                st.markdown(diagnostico)
+                st.session_state["diagnostico_ia"] = diagnostico
+
+        if "diagnostico_ia" in st.session_state:
+            st.markdown(st.session_state["diagnostico_ia"])
 
 with tab_desfases:
     st.subheader("🔍 Coincidencias Cruzadas por Monto (Detección de Desfases/Escribanía)")
@@ -337,6 +344,7 @@ with tab_excepciones:
             hide_index=True,
             use_container_width=True,
         )
+        st.session_state["df_editado"] = df_editado
 
         st.download_button(
             "📥 Descargar Reporte con Resoluciones Confirmadas (CSV)",
@@ -345,6 +353,34 @@ with tab_excepciones:
             mime="text/csv",
             use_container_width=True,
         )
+
+with tab_export:
+    st.subheader("📄 Generación de Reporte Ejecutivo Imprimible")
+    st.caption("Descarga una hoja de auditoría oficial en formato HTML lista para imprimir como PDF o enviar por WhatsApp/Correo.")
+
+    df_para_html = st.session_state.get("df_editado", reporte_excepciones)
+    diag_ia_para_html = st.session_state.get("diagnostico_ia", "")
+
+    html_reporte = generar_html_reporte_ejecutivo(
+        salud_financiera=pct_salud,
+        monto_riesgo=monto_riesgo,
+        total_reg=total_reg,
+        reporte_excepciones=df_para_html,
+        diagnostico_ia=diag_ia_para_html
+    )
+
+    st.download_button(
+        "📥 Descargar Informe Ejecutivo (HTML / PDF)",
+        data=html_reporte,
+        file_name="Informe_Ejecutivo_Datia.html",
+        mime="text/html",
+        use_container_width=True,
+        type="primary"
+    )
+
+    st.divider()
+    st.write("👀 **Vista previa del Informe:**")
+    st.components.v1.html(html_reporte, height=500, scrolling=True)
 
 with tab_pos:
     mostrar_tabla(
