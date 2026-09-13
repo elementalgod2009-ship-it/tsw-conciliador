@@ -1,5 +1,6 @@
-streamlit
 pandas
-google-genai
-plotly
+fastapi
+pydantic
+uvicorn
+
 
