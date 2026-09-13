@@ -1,8 +1,6 @@
-"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (UI & Funciones Operativas)."""
+"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (Mapeo Dinámico y Robustez)."""
 
 from __future__ import annotations
-
-from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
@@ -15,17 +13,8 @@ from conciliacion import (
     generar_reporte_excepciones,
     generar_reporte_ia,
     leer_csv,
+    normalizar_dataframe,
 )
-
-POS_MAPPING = {
-    "Ticket_No": "id_referencia",
-    "Monto_Total": "monto",
-}
-
-DATAFAST_MAPPING = {
-    "Num_Autorizacion": "id_referencia",
-    "Valor_Liquidado": "monto",
-}
 
 
 def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -49,54 +38,6 @@ def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
         }
     )
     return pos, datafast
-
-
-def cargar_datos(
-    archivo_pos,
-    archivo_datafast,
-    usar_ejemplos: bool,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Carga y normaliza los dos archivos desde la interfaz."""
-    if usar_ejemplos:
-        pos_crudo, datafast_crudo = datos_de_ejemplo()
-        pos_normalizado = leer_csv(
-            BytesIO(pos_crudo.to_csv(index=False).encode("utf-8")),
-            POS_MAPPING,
-            "POS",
-        )[1]
-        datafast_normalizado = leer_csv(
-            BytesIO(datafast_crudo.to_csv(index=False).encode("utf-8")),
-            DATAFAST_MAPPING,
-            "Datafast",
-        )[1]
-        return (
-            pos_crudo,
-            datafast_crudo,
-            pos_normalizado,
-            datafast_normalizado,
-        )
-
-    if archivo_pos is None or archivo_datafast is None:
-        raise ValueError(
-            "Carga los dos archivos CSV o activa los datos de ejemplo."
-        )
-
-    pos_crudo, pos_normalizado = leer_csv(
-        archivo_pos,
-        POS_MAPPING,
-        "POS",
-    )
-    datafast_crudo, datafast_normalizado = leer_csv(
-        archivo_datafast,
-        DATAFAST_MAPPING,
-        "Datafast",
-    )
-    return (
-        pos_crudo,
-        datafast_crudo,
-        pos_normalizado,
-        datafast_normalizado,
-    )
 
 
 def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> tuple[float, float, int]:
@@ -203,71 +144,58 @@ st.caption("Plataforma de investigación operativa basada en evidencia para Esta
 
 with st.sidebar:
     st.header("⚙️ Configuración & Fuentes")
-    archivo_pos = st.file_uploader(
-        "Archivo de ventas POS (Pista)",
-        type=["csv"],
-        help="Debe incluir Ticket_No y Monto_Total.",
-    )
-    archivo_datafast = st.file_uploader(
-        "Archivo de liquidaciones Datafast",
-        type=["csv"],
-        help="Debe incluir Num_Autorizacion y Valor_Liquidado.",
-    )
-    usar_ejemplos = st.checkbox(
-        "Usar datos de ejemplo (Escenario Portete)",
-        value=archivo_pos is None and archivo_datafast is None,
-    )
-    tolerancia = st.number_input(
-        "Tolerancia máxima ($)",
-        min_value=0.0,
-        value=0.0,
-        step=0.01,
-        format="%.2f",
-        help="Diferencias menores o iguales a este valor se considerarán cuadradas.",
-    )
+    usar_ejemplos = st.checkbox("Usar datos de ejemplo (Escenario Portete)", value=True)
 
-if "pos_crudo" not in st.session_state or usar_ejemplos:
-    try:
-        (
-            pos_crudo,
-            datafast_crudo,
-            pos_normalizado,
-            datafast_normalizado,
-        ) = cargar_datos(
-            archivo_pos,
-            archivo_datafast,
-            usar_ejemplos,
-        )
-        st.session_state["pos_crudo"] = pos_crudo
-        st.session_state["datafast_crudo"] = datafast_crudo
-        st.session_state["pos_norm"] = pos_normalizado
-        st.session_state["datafast_norm"] = datafast_normalizado
-    except (ValueError, pd.errors.ParserError) as error:
-        st.error(str(error))
-        st.stop()
+    if usar_ejemplos:
+        pos_crudo, datafast_crudo = datos_de_ejemplo()
+    else:
+        archivo_pos = st.file_uploader("Archivo de ventas POS (Pista)", type=["csv"])
+        archivo_datafast = st.file_uploader("Archivo de liquidaciones Datafast", type=["csv"])
+
+        if archivo_pos and archivo_datafast:
+            pos_crudo = leer_csv(archivo_pos)
+            datafast_crudo = leer_csv(archivo_datafast)
+        else:
+            st.info("👋 Carga ambos archivos CSV para comenzar.")
+            st.stop()
+
+    st.divider()
+    st.header("🔀 Mapeo de Columnas")
+
+    cols_pos = list(pos_crudo.columns)
+    idx_ref_pos = cols_pos.index("Ticket_No") if "Ticket_No" in cols_pos else 0
+    idx_monto_pos = cols_pos.index("Monto_Total") if "Monto_Total" in cols_pos else (1 if len(cols_pos) > 1 else 0)
+
+    pos_col_ref = st.selectbox("POS: Columna Referencia/Ticket", cols_pos, index=idx_ref_pos)
+    pos_col_monto = st.selectbox("POS: Columna Monto", cols_pos, index=idx_monto_pos)
+
+    cols_df = list(datafast_crudo.columns)
+    idx_ref_df = cols_df.index("Num_Autorizacion") if "Num_Autorizacion" in cols_df else 0
+    idx_monto_df = cols_df.index("Valor_Liquidado") if "Valor_Liquidado" in cols_df else (1 if len(cols_df) > 1 else 0)
+
+    df_col_ref = st.selectbox("Datafast: Columna Autorización", cols_df, index=idx_ref_df)
+    df_col_monto = st.selectbox("Datafast: Columna Monto", cols_df, index=idx_monto_df)
+
+    tolerancia = st.number_input("Tolerancia máxima ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+
+# Normalización con el mapeo dinámico
+pos_norm = normalizar_dataframe(pos_crudo, pos_col_ref, pos_col_monto, "POS")
+datafast_norm = normalizar_dataframe(datafast_crudo, df_col_ref, df_col_monto, "Datafast")
 
 # --- FILTROS OPERATIVOS EN SIDEBAR ---
 with st.sidebar:
     st.divider()
-    st.header(" Filtros Operativos de Pista")
+    st.header("🎯 Filtros Operativos")
     
-    pos_df = st.session_state["pos_norm"]
-    df_fast = st.session_state["datafast_norm"]
-
-    # Filtro opcional por Surtidor si existe en POS
     surtidores = ["Todos"]
-    if "Surtidor" in pos_df.columns:
-        surtidores += sorted(pos_df["Surtidor"].dropna().unique().tolist())
+    if "Surtidor" in pos_norm.columns:
+        surtidores += sorted(pos_norm["Surtidor"].dropna().unique().tolist())
     surtidor_sel = st.selectbox("Filtrar por Surtidor/Isla", surtidores)
 
     if surtidor_sel != "Todos":
-        pos_df = pos_df[pos_df["Surtidor"] == surtidor_sel].copy()
+        pos_norm = pos_norm[pos_norm["Surtidor"] == surtidor_sel].copy()
 
-    resultado = conciliar_sistemas(
-        pos_df,
-        df_fast,
-        tolerancia_max=tolerancia,
-    )
+resultado = conciliar_sistemas(pos_norm, datafast_norm, tolerancia_max=tolerancia)
 
 reporte_excepciones = generar_reporte_excepciones(
     resultado["diferencias_monto"],
@@ -289,7 +217,7 @@ with tab_resumen:
     pct_salud, monto_riesgo, total_reg = mostrar_resumen(resultado)
 
 with tab_agente:
-    st.subheader(" Diagnóstico de Investigación e Hipótesis")
+    st.subheader("🤖 Diagnóstico de Investigación e Hipótesis")
     st.caption("Generación de hipótesis explicativas con Gemini 3.6 Flash (Sin asunción automática de pérdida)")
 
     if reporte_excepciones.empty:
@@ -347,7 +275,7 @@ with tab_excepciones:
         st.session_state["df_editado"] = df_editado
 
         st.download_button(
-            " Descargar Reporte con Resoluciones Confirmadas (CSV)",
+            "📥 Descargar Reporte con Resoluciones Confirmadas (CSV)",
             data=df_editado.to_csv(index=False).encode("utf-8"),
             file_name="reporte_excepciones_confirmadas.csv",
             mime="text/csv",
@@ -379,19 +307,19 @@ with tab_export:
     )
 
     st.divider()
-    st.write(" **Vista previa del Informe:**")
+    st.write("👀 **Vista previa del Informe:**")
     st.components.v1.html(html_reporte, height=500, scrolling=True)
 
 with tab_pos:
     mostrar_tabla(
         "Ventas cargadas del POS",
-        st.session_state["pos_crudo"],
+        pos_crudo,
         "No hay ventas POS cargadas.",
     )
 
 with tab_datafast:
     mostrar_tabla(
         "Liquidaciones cargadas de Datafast",
-        st.session_state["datafast_crudo"],
+        datafast_crudo,
         "No hay liquidaciones Datafast cargadas.",
     )
