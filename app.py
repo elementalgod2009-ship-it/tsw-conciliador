@@ -249,7 +249,7 @@ if "pos_crudo" not in st.session_state or usar_ejemplos:
 # --- FILTROS OPERATIVOS EN SIDEBAR ---
 with st.sidebar:
     st.divider()
-    st.header("🎯 Filtros Operativos de Pista")
+    st.header(" Filtros Operativos de Pista")
     
     pos_df = st.session_state["pos_norm"]
     df_fast = st.session_state["datafast_norm"]
@@ -289,7 +289,7 @@ with tab_resumen:
     pct_salud, monto_riesgo, total_reg = mostrar_resumen(resultado)
 
 with tab_agente:
-    st.subheader("🤖 Diagnóstico de Investigación e Hipótesis")
+    st.subheader(" Diagnóstico de Investigación e Hipótesis")
     st.caption("Generación de hipótesis explicativas con Gemini 3.6 Flash (Sin asunción automática de pérdida)")
 
     if reporte_excepciones.empty:
@@ -347,7 +347,7 @@ with tab_excepciones:
         st.session_state["df_editado"] = df_editado
 
         st.download_button(
-            "📥 Descargar Reporte con Resoluciones Confirmadas (CSV)",
+            " Descargar Reporte con Resoluciones Confirmadas (CSV)",
             data=df_editado.to_csv(index=False).encode("utf-8"),
             file_name="reporte_excepciones_confirmadas.csv",
             mime="text/csv",
@@ -379,7 +379,7 @@ with tab_export:
     )
 
     st.divider()
-    st.write("👀 **Vista previa del Informe:**")
+    st.write(" **Vista previa del Informe:**")
     st.components.v1.html(html_reporte, height=500, scrolling=True)
 
 with tab_pos:
