@@ -51,50 +51,51 @@ def generar_reporte_ia(datos_descuadre: str) -> str:
 
 def normalizar_dataframe(
     df_crudo: pd.DataFrame,
-    mapeo_columnas: dict[str, str],
+    col_referencia: str,
+    col_monto: str,
     fuente: str,
 ) -> pd.DataFrame:
-    """Adapta las columnas de una fuente al formato común de conciliación."""
-    df = df_crudo.rename(columns=mapeo_columnas).copy()
-    columnas_requeridas = {"id_referencia", "monto"}
-    faltantes = columnas_requeridas - set(df.columns)
-    if faltantes:
-        faltantes_texto = ", ".join(sorted(faltantes))
-        raise ValueError(
-            f"Faltan columnas requeridas en {fuente}: {faltantes_texto}"
-        )
+    """Adapta las columnas seleccionadas al formato estándar de conciliación."""
+    df = df_crudo.copy()
+    
+    if col_referencia not in df.columns or col_monto not in df.columns:
+        raise ValueError(f"Las columnas seleccionadas no existen en el archivo de {fuente}.")
 
-    # Conservamos columnas auxiliares de filtro si existen en el dataframe crudo
-    cols_a_preservar = ["id_referencia", "monto"]
-    if "Hora" in df_crudo.columns:
-        df["Hora"] = df_crudo["Hora"].astype(str)
-        cols_a_preservar.append("Hora")
-    if "Surtidor" in df_crudo.columns:
-        df["Surtidor"] = df_crudo["Surtidor"].astype(str)
-        cols_a_preservar.append("Surtidor")
-
-    df = df[cols_a_preservar].copy()
-    df["id_referencia"] = df["id_referencia"].astype("string").str.strip()
+    df["id_referencia"] = df[col_referencia].astype("string").str.strip()
     df["monto"] = pd.to_numeric(
-        df["monto"]
+        df[col_monto]
         .astype("string")
         .str.replace(r"[\$,]", "", regex=True)
         .str.strip(),
         errors="coerce",
     )
+
+    cols_a_preservar = ["id_referencia", "monto"]
+    if "Hora" in df.columns:
+        df["Hora"] = df["Hora"].astype(str)
+        cols_a_preservar.append("Hora")
+    if "Surtidor" in df.columns:
+        df["Surtidor"] = df["Surtidor"].astype(str)
+        cols_a_preservar.append("Surtidor")
+
+    df = df[cols_a_preservar].copy()
     df["fuente"] = fuente
     return df
 
 
-def leer_csv(
-    archivo: str | Path | Any,
-    mapeo_columnas: dict[str, str],
-    fuente: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Lee un CSV y devuelve sus filas originales y su versión normalizada."""
-    df_crudo = pd.read_csv(archivo)
-    df_normalizado = normalizar_dataframe(df_crudo, mapeo_columnas, fuente)
-    return df_crudo, df_normalizado
+def leer_csv(archivo: str | Path | Any) -> pd.DataFrame:
+    """Lee un CSV detectando automáticamente si usa coma o punto y coma."""
+    try:
+        # Intento estándar con coma
+        df = pd.read_csv(archivo)
+        if len(df.columns) == 1:
+            # Si solo detectó 1 columna, reintentamos con punto y coma ';'
+            if isinstance(archivo, BytesIO):
+                archivo.seek(0)
+            df = pd.read_csv(archivo, sep=";")
+        return df
+    except Exception as e:
+        raise ValueError(f"No se pudo procesar el archivo CSV: {str(e)}")
 
 
 def conciliar_sistemas(
@@ -286,4 +287,3 @@ def generar_html_reporte_ejecutivo(
     </html>
     """
     return html
-
