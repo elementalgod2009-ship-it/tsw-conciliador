@@ -1,4 +1,4 @@
-"""Módulo de lógica de negocio, detección de hipótesis y conciliación para Datia / TSW Conciliador."""
+"""Modulo de logica de negocio, deteccion de hipotesis y conciliacion para Datia."""
 
 from __future__ import annotations
 
@@ -6,19 +6,27 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from google import genai
 import pandas as pd
 import streamlit as st
 
+# Importacion protegida para evitar errores de entorno en despliegue
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 
 def generar_reporte_ia(datos_descuadre: str) -> str:
-    """Llama a Gemini para generar un análisis basado en hipótesis explicativas y no punitivas."""
+    """Llama a Gemini para generar un analisis basado en hipotesis explicativas y no punitivas."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
         return (
-            "⚠️ No se encontró la clave 'GOOGLE_API_KEY' configurada en st.secrets. "
-            "Por favor, agrégala en la configuración de la aplicación en Streamlit Cloud."
+            "Advertencia: No se encontro la clave 'GOOGLE_API_KEY' configurada en st.secrets. "
+            "Por favor, agregala en la configuracion de la aplicacion en Streamlit Cloud."
         )
+
+    if genai is None:
+        return "Error: La libreria 'google-genai' no esta instalada correctamente en el entorno de despliegue."
 
     try:
         client = genai.Client(
@@ -27,26 +35,26 @@ def generar_reporte_ia(datos_descuadre: str) -> str:
         )
 
         prompt = f"""
-        Actúa como un Asistente Analítico de Auditoría para Estaciones de Servicio (Datia).
+        Actua como un Asistente Analitico de Auditoria para Estaciones de Servicio (Datia).
         Analiza las siguientes excepciones de cierre encontradas entre el sistema POS de pista y el procesador de tarjetas (Datafast):
 
         {datos_descuadre}
 
-        Genera un informe con enfoque de investigación operativa y NO PUNITIVO (no asumas automáticamente robo o pérdida). 
+        Genera un informe con enfoque de investigacion operativa y NO PUNITIVO (no asumas automaticamente robo o perdida). 
         Estructura la respuesta estrictamente en estos 3 bloques:
 
-        1. **HIPÓTESIS DE ORIGEN:** Propón causas probables para las diferencias encontradas (ej. posible cambio de medio de pago a efectivo en caja, transacción procesada en el lote del día/turno siguiente, error de digitación en el POS).
-        2. **INFORMACIÓN Y EVIDENCIA FALTANTE:** Especifica qué documentos o soportes debe revisar el administrador para confirmar o descartar cada hipótesis (ej. vouchers físicos, reporte de lote del turno nocturno, bitácora de caja chica).
-        3. **PASOS RECOMENDADOS DE VERIFICACIÓN:** Acciones concretas paso a paso para que el usuario confirme la resolución sin generar fricción con el personal de pista.
+        1. **HIPOTESIS DE ORIGEN:** Propon causas probables para las diferencias encontradas (ej. posible cambio de medio de pago a efectivo en caja, transaccion procesada en el lote del dia/turno siguiente, error de digitacion en el POS).
+        2. **INFORMACION Y EVIDENCIA FALTANTE:** Especifica que documentos o soportes debe revisar el administrador para confirmar o descartar cada hipotesis (ej. vouchers fisicos, reporte de lote del turno nocturno, bitacora de caja chica).
+        3. **PASOS RECOMENDADOS DE VERIFICACION:** Acciones concretas paso a paso para que el usuario confirme la resolucion sin generar friccion con el personal de pista.
         """
 
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
         )
         return response.text
     except Exception as e:
-        return f"❌ Error al consultar el servicio de Inteligencia Artificial: {str(e)}"
+        return f"Error al consultar el servicio de Inteligencia Artificial: {str(e)}"
 
 
 def normalizar_dataframe(
@@ -55,7 +63,7 @@ def normalizar_dataframe(
     col_monto: str,
     fuente: str,
 ) -> pd.DataFrame:
-    """Adapta las columnas seleccionadas al formato estándar de conciliación."""
+    """Adapta las columnas seleccionadas al formato estandar de conciliacion."""
     df = df_crudo.copy()
     
     if col_referencia not in df.columns or col_monto not in df.columns:
@@ -65,7 +73,7 @@ def normalizar_dataframe(
     df["monto"] = pd.to_numeric(
         df[col_monto]
         .astype("string")
-        .str.replace(r"[\$,]", "", regex=True)
+        .str.replace(r"[\\$,]", "", regex=True)
         .str.strip(),
         errors="coerce",
     )
@@ -84,12 +92,10 @@ def normalizar_dataframe(
 
 
 def leer_csv(archivo: str | Path | Any) -> pd.DataFrame:
-    """Lee un CSV detectando automáticamente si usa coma o punto y coma."""
+    """Lee un CSV detectando automaticamente si usa coma o punto y coma."""
     try:
-        # Intento estándar con coma
         df = pd.read_csv(archivo)
         if len(df.columns) == 1:
-            # Si solo detectó 1 columna, reintentamos con punto y coma ';'
             if isinstance(archivo, BytesIO):
                 archivo.seek(0)
             df = pd.read_csv(archivo, sep=";")
@@ -98,7 +104,7 @@ def leer_csv(archivo: str | Path | Any) -> pd.DataFrame:
         raise ValueError(f"No se pudo procesar el archivo CSV: {str(e)}")
 
 
-def conciliar_sistemas(
+def concili_sistemas(
     df_pos: pd.DataFrame,
     df_datafast: pd.DataFrame,
     tolerancia_max: float = 0.0,
@@ -141,7 +147,7 @@ def conciliar_sistemas(
 def detectar_posibles_desfases(
     solo_pos: pd.DataFrame, solo_datafast: pd.DataFrame
 ) -> pd.DataFrame:
-    """Detecta coincidencias por monto idéntico que podrían sugerir un error de referencia o desfase de lote."""
+    """Detecta coincidencias por monto identico que podrian sugerir un error de referencia o desfase de lote."""
     posibles_desfases = []
 
     if not solo_pos.empty and not solo_datafast.empty:
@@ -158,7 +164,7 @@ def detectar_posibles_desfases(
                 "Ref_POS": row["id_referencia_pos"],
                 "Ref_Datafast": row["id_referencia_datafast"],
                 "Monto Coincidente ($)": row["monto_pos"],
-                "Hipótesis Suministrada": "Posible error de digitación de referencia o desfase de cierre de lote"
+                "Hipotesis Suministrada": "Posible error de digitacion de referencia o desfase de cierre de lote"
             })
 
     return pd.DataFrame(posibles_desfases)
@@ -215,8 +221,8 @@ def generar_html_reporte_ejecutivo(
             ref = row.get("id_referencia", "N/A")
             m_pos = f"${row.get('monto_pos', 0):,.2f}" if pd.notna(row.get('monto_pos')) else "-"
             m_df = f"${row.get('monto_datafast', 0):,.2f}" if pd.notna(row.get('monto_datafast')) else "-"
-            tipo = row.get("tipo_error", "Excepción")
-            res = row.get("Resolución Administrador", "Pendiente")
+            tipo = row.get("tipo_error", "Excepcion")
+            res = row.get("Resolucion Administrador", "Pendiente")
             filas_html += f"<tr><td>{ref}</td><td>{m_pos}</td><td>{m_df}</td><td>{tipo}</td><td><strong>{res}</strong></td></tr>"
     else:
         filas_html = "<tr><td colspan='5' style='text-align:center;'>Sin excepciones registradas. Cierre perfecto.</td></tr>"
@@ -226,7 +232,7 @@ def generar_html_reporte_ejecutivo(
     <html>
     <head>
         <meta charset="utf-8">
-        <title>Reporte de Auditoría Datia</title>
+        <title>Reporte de Auditoria Datia</title>
         <style>
             body {{ font-family: Arial, sans-serif; margin: 30px; color: #1E293B; }}
             .header {{ border-bottom: 3px solid #2563EB; padding-bottom: 10px; margin-bottom: 20px; }}
@@ -244,8 +250,8 @@ def generar_html_reporte_ejecutivo(
     </head>
     <body>
         <div class="header">
-            <div class="title">⛽ Datia — Informe Oficial de Cierre de Caja</div>
-            <div class="subtitle">Auditoría Operativa y Conciliación de Tarjetas | Estación de Servicio</div>
+            <div class="title">Datia - Informe Oficial de Cierre de Caja</div>
+            <div class="subtitle">Auditoria Operativa y Conciliacion de Tarjetas | Estacion de Servicio</div>
         </div>
 
         <div class="kpi-container">
@@ -263,15 +269,15 @@ def generar_html_reporte_ejecutivo(
             </div>
         </div>
 
-        <h3>⚠️ Detalle de Excepciones y Resoluciones</h3>
+        <h3>Detalle de Excepciones y Resoluciones</h3>
         <table>
             <thead>
                 <tr>
                     <th>Referencia</th>
                     <th>Monto POS</th>
                     <th>Monto Datafast</th>
-                    <th>Tipo Anomalía</th>
-                    <th>Resolución Administrador</th>
+                    <th>Tipo Anomalia</th>
+                    <th>Resolucion Administrador</th>
                 </tr>
             </thead>
             <tbody>
@@ -279,10 +285,10 @@ def generar_html_reporte_ejecutivo(
             </tbody>
         </table>
 
-        {f'<div class="ia-box"><h4>🤖 Diagnóstico del Agente Analítico</h4><p>{diagnostico_ia.replace(chr(10), "<br>")}</p></div>' if diagnostico_ia else ''}
+        {f'<div class="ia-box"><h4>Diagnostico del Agente Analitico</h4><p>{diagnostico_ia.replace(chr(10), "<br>")}</p></div>' if diagnostico_ia else ''}
 
         <br><br>
-        <p style="font-size: 11px; color: #94A3B8; text-align: center;">Generado automáticamente por Datia - Asistente de Auditoría para Gasolineras.</p>
+        <p style="font-size: 11px; color: #94A3B8; text-align: center;">Generado automaticamente por Datia - Asistente de Auditoria para Gasolineras.</p>
     </body>
     </html>
     """
