@@ -1,10 +1,11 @@
-"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia."""
+"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (UI Mejorada)."""
 
 from __future__ import annotations
 
 from io import BytesIO
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from conciliacion import (
@@ -36,7 +37,6 @@ def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
             "Monto_Total": [500.00, 100.00, 50.00, 75.50, 42.00, 25.00],
         }
     )
-    # T-1005 no aparece en Datafast con ese ID, pero existe un pago de 42.00 con la ref T-9988 (error de digitación)
     datafast = pd.DataFrame(
         {
             "Num_Autorizacion": ["T-1001", "T-1002", "T-1004", "T-9988", "T-9999"],
@@ -96,12 +96,12 @@ def cargar_datos(
 
 
 def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
-    """Muestra métricas y gráficos del resultado de la conciliación."""
+    """Muestra métricas y gráficos interactivos del resultado de la conciliación."""
     cuadran = resultado["cuadran"]
     diferencias = resultado["diferencias_monto"]
     solo_datafast = resultado["solo_datafast"]
     solo_pos = resultado["solo_pos"]
-    
+
     total_registros = len(resultado["cruce"])
     pct_salud = round((len(cuadran) / total_registros) * 100, 1) if total_registros > 0 else 0.0
 
@@ -110,10 +110,11 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
     monto_faltante = solo_pos["monto_pos"].sum() if not solo_pos.empty else 0.0
     monto_riesgo_total = monto_descuadre + monto_sobrante + monto_faltante
 
+    # KPI Cards estilizadas
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Salud Financiera", f"{pct_salud}%", help="% de transacciones conciliadas")
-    col2.metric("Monto a Investigar", f"${monto_riesgo_total:,.2f}", delta="-Riesgo", delta_color="inverse")
-    col3.metric("Conciliadas ($1:1$)", f"{len(cuadran)} reg")
+    col1.metric("Salud Financiera", f"{pct_salud}%", help="% de transacciones conciliadas sin ajuste")
+    col2.metric("Monto a Investigar", f"${monto_riesgo_total:,.2f}", delta="Riesgo Acumulado", delta_color="inverse")
+    col3.metric("Conciliadas (1:1)", f"{len(cuadran)} reg")
     col4.metric("Excepciones Totales", f"{len(diferencias) + len(solo_datafast) + len(solo_pos)} reg")
 
     st.divider()
@@ -122,41 +123,55 @@ def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> None:
 
     with col_izq:
         st.subheader("📊 Distribución por Criterio")
-        resumen = pd.DataFrame(
+        df_criterio = pd.DataFrame(
             {
-                "Estado": [
-                    "Conciliadas",
-                    "Diferencias de monto",
-                    "Solo Datafast",
-                    "Solo POS",
-                ],
-                "Cantidad": [
-                    len(cuadran),
-                    len(diferencias),
-                    len(solo_datafast),
-                    len(solo_pos),
-                ],
+                "Criterio": ["Conciliadas", "Diferencia Monto", "Solo Datafast", "Solo POS"],
+                "Cantidad": [len(cuadran), len(diferencias), len(solo_datafast), len(solo_pos)],
             }
-        ).set_index("Estado")
-        st.bar_chart(resumen, color="#2563EB")
+        )
+        fig_criterio = px.bar(
+            df_criterio,
+            x="Criterio",
+            y="Cantidad",
+            text="Cantidad",
+            color="Criterio",
+            color_discrete_sequence=["#10B981", "#F59E0B", "#3B82F6", "#EF4444"],
+        )
+        fig_criterio.update_traces(textposition="outside")
+        fig_criterio.update_layout(
+            showlegend=False,
+            xaxis_title="",
+            yaxis_title="Número de Registros",
+            margin=dict(l=10, r=10, t=20, b=20),
+            height=320,
+        )
+        st.plotly_chart(fig_criterio, use_container_width=True)
 
     with col_der:
         st.subheader("⚠️ Desglose del Riesgo Monetario")
-        riesgo_df = pd.DataFrame(
+        df_riesgo = pd.DataFrame(
             {
-                "Tipo Anomalía": [
-                    "Descuadres de Monto",
-                    "Sobrantes Datafast",
-                    "Faltantes POS",
-                ],
-                "Monto ($)": [
-                    monto_descuadre,
-                    monto_sobrante,
-                    monto_faltante,
-                ],
+                "Tipo de Riesgo": ["Descuadre Monto", "Faltante POS", "Sobrante Datafast"],
+                "Monto ($)": [monto_descuadre, monto_faltante, monto_sobrante],
             }
-        ).set_index("Tipo Anomalía")
-        st.bar_chart(riesgo_df, color="#DC2626")
+        )
+        fig_riesgo = px.bar(
+            df_riesgo,
+            x="Tipo de Riesgo",
+            y="Monto ($)",
+            text_auto=".2f",
+            color="Tipo de Riesgo",
+            color_discrete_sequence=["#F59E0B", "#EF4444", "#8B5CF6"],
+        )
+        fig_riesgo.update_traces(textposition="outside")
+        fig_riesgo.update_layout(
+            showlegend=False,
+            xaxis_title="",
+            yaxis_title="Monto en Dólares ($)",
+            margin=dict(l=10, r=10, t=20, b=20),
+            height=320,
+        )
+        st.plotly_chart(fig_riesgo, use_container_width=True)
 
 
 def mostrar_tabla(
@@ -176,6 +191,19 @@ st.set_page_config(
     page_title="Datia - Asistente de Cierre de Caja",
     page_icon="⛽",
     layout="wide",
+)
+
+# Estilos CSS Personalizados para UI Ejecutiva
+st.markdown(
+    """
+    <style>
+    .main { background-color: #0E1117; }
+    div[data-testid="stMetricValue"] { font-size: 2rem; font-weight: 700; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 6px 6px 0px 0px; padding: 8px 16px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.title("⛽ Datia: Asistente de Auditoría de Cierre de Caja")
@@ -257,9 +285,9 @@ with tab_resumen:
     mostrar_resumen(resultado)
 
 with tab_agente:
-    st.subheader("🤖 Diagnóstico de Investigación y Hipótesis")
+    st.subheader("🤖 Diagnóstico de Investigación e Hipótesis")
     st.caption("Generación de hipótesis explicativas con Gemini 3.6 Flash (Sin asunción automática de pérdida)")
-    
+
     if reporte_excepciones.empty:
         st.success("🎉 Cierre impecable: No hay discrepancias que requieran investigación.")
     else:
@@ -281,14 +309,13 @@ with tab_desfases:
 with tab_excepciones:
     st.subheader("⚠️ Registro y Confirmación Humana de Excepciones")
     st.write("Modifica la columna 'Resolución Administrador' para confirmar el destino final de cada caso:")
-    
+
     if reporte_excepciones.empty:
         st.info("No hay excepciones para mostrar.")
     else:
-        if "Estado_Resolucion" not in reporte_excepciones.columns:
+        if "Resolución Administrador" not in reporte_excepciones.columns:
             reporte_excepciones["Resolución Administrador"] = "Pendiente de Investigación"
-            
-        # Tabla interactiva editable para la confirmación humana
+
         df_editado = st.data_editor(
             reporte_excepciones,
             column_config={
@@ -310,7 +337,7 @@ with tab_excepciones:
             hide_index=True,
             use_container_width=True,
         )
-        
+
         st.download_button(
             "📥 Descargar Reporte con Resoluciones Confirmadas (CSV)",
             data=df_editado.to_csv(index=False).encode("utf-8"),
@@ -332,4 +359,3 @@ with tab_datafast:
         st.session_state["datafast_crudo"],
         "No hay liquidaciones Datafast cargadas.",
     )
-
