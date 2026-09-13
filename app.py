@@ -1,325 +1,170 @@
-"""Aplicación Streamlit para la conciliación diaria y auditoría con Datia (Mapeo Dinámico y Robustez)."""
-
-from __future__ import annotations
-
-import pandas as pd
-import plotly.express as px
 import streamlit as st
+import pandas as pd
+from io import BytesIO
 
+# Importamos las funciones del módulo de lógica que ya tienes en conciliacion.py
 from conciliacion import (
-    conciliar_sistemas,
+    normalizar_dataframe,
+    leer_csv,
+    concili_sistemas,
     detectar_posibles_desfases,
-    generar_html_reporte_ejecutivo,
     generar_reporte_excepciones,
     generar_reporte_ia,
-    leer_csv,
-    normalizar_dataframe,
+    generar_html_reporte_ejecutivo
 )
 
-
-def datos_de_ejemplo() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Devuelve datos de demostración inspirados en los casos de Portete."""
-    pos = pd.DataFrame(
-        {
-            "Ticket_No": ["T-1001", "T-1002", "T-1003", "T-1004", "T-1005", "T-1006"],
-            "Fecha": ["2026-09-12"] * 6,
-            "Hora": ["08:15", "09:30", "11:45", "14:10", "16:40", "20:05"],
-            "Surtidor": ["Surtidor 01", "Surtidor 02", "Surtidor 01", "Surtidor 03", "Surtidor 02", "Surtidor 01"],
-            "Metodo_Pago": ["Tarjeta"] * 5 + ["Efectivo"],
-            "Monto_Total": [500.00, 100.00, 50.00, 75.50, 42.00, 25.00],
-        }
-    )
-    datafast = pd.DataFrame(
-        {
-            "Num_Autorizacion": ["T-1001", "T-1002", "T-1004", "T-9988", "T-9999"],
-            "Fecha_Proceso": ["2026-09-12"] * 5,
-            "Hora": ["08:15", "09:30", "14:10", "16:40", "22:00"],
-            "Valor_Liquidado": [480.00, 100.00, 75.50, 42.00, 200.00],
-        }
-    )
-    return pos, datafast
-
-
-def mostrar_resumen(resultado: dict[str, pd.DataFrame]) -> tuple[float, float, int]:
-    """Muestra métricas y gráficos interactivos del resultado de la conciliación."""
-    cuadran = resultado["cuadran"]
-    diferencias = resultado["diferencias_monto"]
-    solo_datafast = resultado["solo_datafast"]
-    solo_pos = resultado["solo_pos"]
-
-    total_registros = len(resultado["cruce"])
-    pct_salud = round((len(cuadran) / total_registros) * 100, 1) if total_registros > 0 else 0.0
-
-    monto_descuadre = diferencias["diferencia"].sum() if not diferencias.empty else 0.0
-    monto_sobrante = solo_datafast["monto_datafast"].sum() if not solo_datafast.empty else 0.0
-    monto_faltante = solo_pos["monto_pos"].sum() if not solo_pos.empty else 0.0
-    monto_riesgo_total = monto_descuadre + monto_sobrante + monto_faltante
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Salud Financiera", f"{pct_salud}%", help="% de transacciones conciliadas sin ajuste")
-    col2.metric("Monto a Investigar", f"${monto_riesgo_total:,.2f}", delta="Riesgo Acumulado", delta_color="inverse")
-    col3.metric("Conciliadas (1:1)", f"{len(cuadran)} reg")
-    col4.metric("Excepciones Totales", f"{len(diferencias) + len(solo_datafast) + len(solo_pos)} reg")
-
-    st.divider()
-
-    col_izq, col_der = st.columns(2)
-
-    with col_izq:
-        st.subheader("📊 Distribución por Criterio")
-        df_criterio = pd.DataFrame(
-            {
-                "Criterio": ["Conciliadas", "Diferencia Monto", "Solo Datafast", "Solo POS"],
-                "Cantidad": [len(cuadran), len(diferencias), len(solo_datafast), len(solo_pos)],
-            }
-        )
-        fig_criterio = px.bar(
-            df_criterio,
-            x="Criterio",
-            y="Cantidad",
-            text="Cantidad",
-            color="Criterio",
-            color_discrete_sequence=["#10B981", "#F59E0B", "#3B82F6", "#EF4444"],
-        )
-        fig_criterio.update_traces(textposition="outside")
-        fig_criterio.update_layout(
-            showlegend=False,
-            xaxis_title="",
-            yaxis_title="Número de Registros",
-            margin=dict(l=10, r=10, t=20, b=20),
-            height=320,
-        )
-        st.plotly_chart(fig_criterio, use_container_width=True)
-
-    with col_der:
-        st.subheader("⚠️ Desglose del Riesgo Monetario")
-        df_riesgo = pd.DataFrame(
-            {
-                "Tipo de Riesgo": ["Descuadre Monto", "Faltante POS", "Sobrante Datafast"],
-                "Monto ($)": [monto_descuadre, monto_faltante, monto_sobrante],
-            }
-        )
-        fig_riesgo = px.bar(
-            df_riesgo,
-            x="Tipo de Riesgo",
-            y="Monto ($)",
-            text_auto=".2f",
-            color="Tipo de Riesgo",
-            color_discrete_sequence=["#F59E0B", "#EF4444", "#8B5CF6"],
-        )
-        fig_riesgo.update_traces(textposition="outside")
-        fig_riesgo.update_layout(
-            showlegend=False,
-            xaxis_title="",
-            yaxis_title="Monto en Dólares ($)",
-            margin=dict(l=10, r=10, t=20, b=20),
-            height=320,
-        )
-        st.plotly_chart(fig_riesgo, use_container_width=True)
-
-    return pct_salud, monto_riesgo_total, total_registros
-
-
-def mostrar_tabla(
-    titulo: str,
-    df: pd.DataFrame,
-    mensaje_vacio: str,
-) -> None:
-    st.subheader(titulo)
-    if df.empty:
-        st.info(mensaje_vacio)
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-
-# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Datia - Asistente de Cierre de Caja",
+    page_title="DATIA - Asistente Financiero para Gasolineras",
     page_icon="⛽",
-    layout="wide",
+    layout="wide"
 )
 
-st.title("⛽ Datia: Asistente de Auditoría de Cierre de Caja")
-st.caption("Plataforma de investigación operativa basada en evidencia para Estaciones de Servicio")
+st.title("⛽ DATIA — Sistema de Conciliación y Asistente Financiero")
+st.markdown("Automatización de conciliación POS vs Datafast / Bancos con análisis inteligente para estaciones de servicio.")
 
-with st.sidebar:
-    st.header("⚙️ Configuración & Fuentes")
-    usar_ejemplos = st.checkbox("Usar datos de ejemplo (Escenario Portete)", value=True)
+# --- BARRA LATERAL: CARGA DE ARCHIVOS ---
+st.sidebar.header("1. Carga de Datos")
+archivo_pos = st.sidebar.file_uploader("Reporte de Ventas POS (CSV/Excel)", type=["csv", "xlsx"])
+archivo_datafast = st.sidebar.file_uploader("Reporte Datafast / Tarjetas (CSV/Excel)", type=["csv", "xlsx"])
 
-    if usar_ejemplos:
-        pos_crudo, datafast_crudo = datos_de_ejemplo()
-    else:
-        archivo_pos = st.file_uploader("Archivo de ventas POS (Pista)", type=["csv"])
-        archivo_datafast = st.file_uploader("Archivo de liquidaciones Datafast", type=["csv"])
+empresa_id = st.sidebar.text_input("ID de Empresa / Estación", value="Estacion_Central_01")
 
-        if archivo_pos and archivo_datafast:
-            pos_crudo = leer_csv(archivo_pos)
-            datafast_crudo = leer_csv(archivo_datafast)
+if archivo_pos and archivo_datafast:
+    try:
+        # Lectura de archivos
+        if archivo_pos.name.endswith('.csv'):
+            df_pos_raw = leer_csv(archivo_pos)
         else:
-            st.info("👋 Carga ambos archivos CSV para comenzar.")
-            st.stop()
+            df_pos_raw = pd.read_excel(archivo_pos)
 
-    st.divider()
-    st.header("🔀 Mapeo de Columnas")
+        if archivo_datafast.name.endswith('.csv'):
+            df_df_raw = leer_csv(archivo_datafast)
+        else:
+            df_df_raw = pd.read_excel(archivo_datafast)
 
-    cols_pos = list(pos_crudo.columns)
-    idx_ref_pos = cols_pos.index("Ticket_No") if "Ticket_No" in cols_pos else 0
-    idx_monto_pos = cols_pos.index("Monto_Total") if "Monto_Total" in cols_pos else (1 if len(cols_pos) > 1 else 0)
+        st.sidebar.success("Archivos cargados correctamente.")
 
-    pos_col_ref = st.selectbox("POS: Columna Referencia/Ticket", cols_pos, index=idx_ref_pos)
-    pos_col_monto = st.selectbox("POS: Columna Monto", cols_pos, index=idx_monto_pos)
+        # Selección de columnas para estandarizar
+        st.subheader("2. Mapeo de Columnas")
+        col1, col2 = st.columns(2)
 
-    cols_df = list(datafast_crudo.columns)
-    idx_ref_df = cols_df.index("Num_Autorizacion") if "Num_Autorizacion" in cols_df else 0
-    idx_monto_df = cols_df.index("Valor_Liquidado") if "Valor_Liquidado" in cols_df else (1 if len(cols_df) > 1 else 0)
+        with col1:
+            st.markdown("### POS (Pista)")
+            cols_pos = df_pos_raw.columns.tolist()
+            ref_pos = st.selectbox("Columna Referencia / Voucher (POS)", cols_pos, key="ref_pos")
+            monto_pos = st.selectbox("Columna Monto (POS)", cols_pos, key="monto_pos")
 
-    df_col_ref = st.selectbox("Datafast: Columna Autorización", cols_df, index=idx_ref_df)
-    df_col_monto = st.selectbox("Datafast: Columna Monto", cols_df, index=idx_monto_df)
+        with col2:
+            st.markdown("### Datafast / Procesador")
+            cols_df = df_df_raw.columns.tolist()
+            ref_df = st.selectbox("Columna Referencia / Voucher (Datafast)", cols_df, key="ref_df")
+            monto_df = st.selectbox("Columna Monto (Datafast)", cols_df, key="monto_df")
 
-    tolerancia = st.number_input("Tolerancia máxima ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        if st.button("Ejecutar Conciliación y Auditoría", type="primary"):
+            # Normalización usando las funciones de conciliacion.py
+            df_pos_norm = normalizar_dataframe(df_pos_raw, ref_pos, monto_pos, fuente="POS")
+            df_df_norm = normalizar_dataframe(df_df_raw, ref_df, monto_df, fuente="Datafast")
 
-# Normalización con el mapeo dinámico
-pos_norm = normalizar_dataframe(pos_crudo, pos_col_ref, pos_col_monto, "POS")
-datafast_norm = normalizar_dataframe(datafast_crudo, df_col_ref, df_col_monto, "Datafast")
+            # Proceso de cruce
+            resultados = concili_sistemas(df_pos_norm, df_df_norm, tolerancia_max=0.01)
+            
+            # Guardamos en session_state para que el chat y otras vistas accedan a ellos
+            st.session_state["resultados"] = resultados
+            st.session_state["empresa_id"] = empresa_id
+            
+            excepciones = generar_reporte_excepciones(
+                resultados["diferencias_monto"],
+                resultados["solo_datafast"],
+                resultados["solo_pos"]
+            )
+            st.session_state["reporte_excepciones"] = excepciones
 
-# --- FILTROS OPERATIVOS EN SIDEBAR ---
-with st.sidebar:
-    st.divider()
-    st.header("🎯 Filtros Operativos")
-    
-    surtidores = ["Todos"]
-    if "Surtidor" in pos_norm.columns:
-        surtidores += sorted(pos_norm["Surtidor"].dropna().unique().tolist())
-    surtidor_sel = st.selectbox("Filtrar por Surtidor/Isla", surtidores)
+            st.success("¡Conciliación completada con éxito!")
 
-    if surtidor_sel != "Todos":
-        pos_norm = pos_norm[pos_norm["Surtidor"] == surtidor_sel].copy()
+    except Exception as e:
+        st.error(f"Ocurrió un error al procesar los archivos: {str(e)}")
 
-resultado = conciliar_sistemas(pos_norm, datafast_norm, tolerancia_max=tolerancia)
+# --- SECCIÓN PRINCIPAL: RESULTADOS Y CHAT FINANCIERO ---
+if "resultados" in st.session_state:
+    res = st.session_state["resultados"]
+    excepciones = st.session_state["reporte_excepciones"]
 
-reporte_excepciones = generar_reporte_excepciones(
-    resultado["diferencias_monto"],
-    resultado["solo_datafast"],
-    resultado["solo_pos"],
-)
+    tab1, tab2, tab3 = st.tabs(["📊 Resumen y KPIs", "⚠️ Excepciones", "💬 Chat Financiero de Auditoría"])
 
-desfases_df = detectar_posibles_desfases(
-    resultado["solo_pos"],
-    resultado["solo_datafast"]
-)
+    with tab1:
+        st.subheader("Resumen General del Cierre")
+        total_transacciones = len(res["cruce"])
+        cuadradas = len(res["cuadran"])
+        num_excepciones = len(excepciones)
+        
+        salud = round((cuadradas / total_transacciones * 100) if total_transacciones > 0 else 0, 2)
+        monto_riesgo = excepciones["monto_pos"].sum() if "monto_pos" in excepciones.columns else 0.0
 
-# --- PESTAÑAS DE NAVEGACIÓN ---
-tab_resumen, tab_agente, tab_desfases, tab_excepciones, tab_export, tab_pos, tab_datafast = st.tabs(
-    ["📊 Resumen & KPIs", "🤖 Asistente Datia", "🔍 Posibles Desfases", "⚠️ Gestión de Excepciones", "📄 Reporte Imprimible", "📋 POS", "💳 Datafast"]
-)
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Salud Financiera", f"{salud}%")
+        kpi2.metric("Monto en Riesgo / Desfase", f"${monto_riesgo:,.2f}")
+        kpi3.metric("Transacciones Procesadas", total_transacciones)
 
-with tab_resumen:
-    pct_salud, monto_riesgo, total_reg = mostrar_resumen(resultado)
+        st.dataframe(res["cruce"].head(20), use_container_width=True)
 
-with tab_agente:
-    st.subheader("🤖 Diagnóstico de Investigación e Hipótesis")
-    st.caption("Generación de hipótesis explicativas con Gemini 3.6 Flash (Sin asunción automática de pérdida)")
+    with tab2:
+        st.subheader("Detalle de Excepciones Detectadas")
+        if not excepciones.empty:
+            st.dataframe(excepciones, use_container_width=True)
+            
+            # Botón para generar reporte IA
+            if st.button("Generar Diagnóstico de IA sobre Excepciones"):
+                with st.spinner("Analizando anomalías con IA..."):
+                    diagnostico = generar_reporte_ia(excepciones.to_string())
+                    st.session_state["diagnostico_ia"] = diagnostico
+                st.markdown("### Diagnóstico Operativo")
+                st.write(diagnostico)
+        else:
+            st.info("No se encontraron excepciones. Cierre de caja perfecto.")
 
-    if reporte_excepciones.empty:
-        st.success("🎉 Cierre impecable: No hay discrepancias que requieran investigación.")
-    else:
-        if st.button("Generar Hipótesis de Cierre", type="primary"):
-            with st.spinner("Analizando evidencias y patrones con Datia..."):
-                resumen_texto = reporte_excepciones.to_string(index=False)
-                diagnostico = generar_reporte_ia(resumen_texto)
-                st.session_state["diagnostico_ia"] = diagnostico
+    with tab3:
+        st.subheader("Asistente Conversacional (Chat Financiero)")
+        st.markdown("Pregúntale al sistema sobre los desfases, faltantes o el estado de la conciliación en lenguaje natural.")
 
-        if "diagnostico_ia" in st.session_state:
-            st.markdown(st.session_state["diagnostico_ia"])
+        # Historial de chat en session_state
+        if "mensajes_chat" not in st.session_state:
+            st.session_state["mensajes_chat"] = []
 
-with tab_desfases:
-    st.subheader("🔍 Coincidencias Cruzadas por Monto (Detección de Desfases/Escribanía)")
-    st.caption("Registros que no coincidieron por Número de Referencia pero comparten el mismo monto exacto.")
-    if desfases_df.empty:
-        st.info("No se hallaron coincidencias de monto cruzado entre las discrepancias.")
-    else:
-        st.success(f"Se hallaron {len(desfases_df)} relaciones por monto que podrían resolver discrepancias sin pérdida.")
-        st.dataframe(desfases_df, use_container_width=True)
+        for mensaje in st.session_state["mensajes_chat"]:
+            with st.chat_message(mensaje["role"]):
+                st.markdown(mensaje["content"])
 
-with tab_excepciones:
-    st.subheader("⚠️ Registro y Confirmación Humana de Excepciones")
-    st.write("Modifica la columna 'Resolución Administrador' para confirmar el destino final de cada caso:")
+        pregunta_usuario = st.chat_input("Ej: ¿Cuáles son los desfases de esta semana o qué pasó con los faltantes?")
 
-    if reporte_excepciones.empty:
-        st.info("No hay excepciones para mostrar.")
-    else:
-        if "Resolución Administrador" not in reporte_excepciones.columns:
-            reporte_excepciones["Resolución Administrador"] = "Pendiente de Investigación"
+        if pregunta_usuario:
+            st.session_state["mensajes_chat"].append({"role": "user", "content": pregunta_usuario})
+            with st.chat_message("user"):
+                st.markdown(pregunta_usuario)
 
-        df_editado = st.data_editor(
-            reporte_excepciones,
-            column_config={
-                "Resolución Administrador": st.column_config.SelectboxColumn(
-                    "Resolución Administrador",
-                    help="Confirmación del usuario que realiza o supervisa el cierre",
-                    options=[
-                        "Pendiente de Investigación",
-                        "Aclarado: Error de Digitación (Referencia)",
-                        "Aclarado: Cambio a Efectivo en Caja",
-                        "Aclarado: Lote de Turno Siguiente",
-                        "Faltante Confirmado (Descuento Pistero)",
-                        "Sobrante Confirmado",
-                    ],
-                    required=True,
-                )
-            },
-            disabled=["id_referencia", "monto_pos", "monto_datafast", "diferencia", "tipo_error"],
-            hide_index=True,
-            use_container_width=True,
-        )
-        st.session_state["df_editado"] = df_editado
+            # Lógica de respuesta basada en la intención de la pregunta
+            pregunta_lower = pregunta_usuario.lower()
+            respuesta_sistema = ""
 
-        st.download_button(
-            "📥 Descargar Reporte con Resoluciones Confirmadas (CSV)",
-            data=df_editado.to_csv(index=False).encode("utf-8"),
-            file_name="reporte_excepciones_confirmadas.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+            if any(palabra in pregunta_lower for palabra in ["desfase", "error", "discrepancia", "faltante", "sobra"]):
+                if not excepciones.empty:
+                    total_exc = len(excepciones)
+                    monto_tot = excepciones['monto_pos'].sum() if 'monto_pos' in excepciones.columns else 0
+                    respuesta_sistema = f"Se han detectado {total_exc} registros con discrepancias financieras, representando un monto total de ${monto_tot:,.2f}. Las principales anomalías se concentran en diferencias de montos y transacciones huérfanas entre POS y Datafast."
+                else:
+                    respuesta_sistema = "No se han detectado desfases ni anomalías en las cuentas procesadas."
+            elif any(palabra in pregunta_lower for palabra in ["salud", "resumen", "estado"]):
+                respuesta_sistema = f"La salud financiera actual del cierre es de {salud}%, con un total de {total_transacciones} transacciones procesadas."
+            else:
+                # Si pregunta algo más complejo, podemos invocar a la IA con los datos de excepciones
+                with st.spinner("Consultando al asistente analítico..."):
+                    contexto_datos = excepciones.to_string() if not excepciones.empty else "Sin excepciones."
+                    prompt_chat = f"Basado en estos datos de conciliación:\n{contexto_datos}\n\nResponde de forma profesional y ejecutiva a la pregunta del usuario: {pregunta_usuario}"
+                    # Usamos la función nativa de IA configurada en conciliacion.py
+                    respuesta_sistema = generar_reporte_ia(prompt_chat)
 
-with tab_export:
-    st.subheader("📄 Generación de Reporte Ejecutivo Imprimible")
-    st.caption("Descarga una hoja de auditoría oficial en formato HTML lista para imprimir como PDF o enviar por WhatsApp/Correo.")
+            st.session_state["mensajes_chat"].append({"role": "assistant", "content": respuesta_sistema})
+            with st.chat_message("assistant"):
+                st.markdown(respuesta_sistema)
 
-    df_para_html = st.session_state.get("df_editado", reporte_excepciones)
-    diag_ia_para_html = st.session_state.get("diagnostico_ia", "")
-
-    html_reporte = generar_html_reporte_ejecutivo(
-        salud_financiera=pct_salud,
-        monto_riesgo=monto_riesgo,
-        total_reg=total_reg,
-        reporte_excepciones=df_para_html,
-        diagnostico_ia=diag_ia_para_html
-    )
-
-    st.download_button(
-        "📥 Descargar Informe Ejecutivo (HTML / PDF)",
-        data=html_reporte,
-        file_name="Informe_Ejecutivo_Datia.html",
-        mime="text/html",
-        use_container_width=True,
-        type="primary"
-    )
-
-    st.divider()
-    st.write("👀 **Vista previa del Informe:**")
-    st.components.v1.html(html_reporte, height=500, scrolling=True)
-
-with tab_pos:
-    mostrar_tabla(
-        "Ventas cargadas del POS",
-        pos_crudo,
-        "No hay ventas POS cargadas.",
-    )
-
-with tab_datafast:
-    mostrar_tabla(
-        "Liquidaciones cargadas de Datafast",
-        datafast_crudo,
-        "No hay liquidaciones Datafast cargadas.",
-    )
+else:
+    st.info("👈 Por favor, carga los archivos del POS y Datafast en la barra lateral para comenzar la conciliación y activar el chat financiero.")
